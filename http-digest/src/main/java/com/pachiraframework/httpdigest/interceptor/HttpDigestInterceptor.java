@@ -1,7 +1,8 @@
 package com.pachiraframework.httpdigest.interceptor;
 
-import java.io.IOException;
-import java.security.NoSuchAlgorithmException;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.nio.charset.Charset;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.UUID;
@@ -12,32 +13,36 @@ import javax.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
 
 import org.springframework.stereotype.Component;
-import org.springframework.util.Base64Utils;
-import org.springframework.util.DigestUtils;
 import org.springframework.web.servlet.handler.HandlerInterceptorAdapter;
 
-import com.github.kevinsawicki.http.HttpRequest.Base64;
-import com.google.common.base.Function;
 import com.google.common.base.Splitter;
 import com.google.common.base.Strings;
 import com.google.common.collect.Maps;
+import com.google.common.hash.Hashing;
+import com.google.common.io.CharStreams;
 
+/**
+ * 实现<a href="https://tools.ietf.org/html/rfc2617">RFC 2617</a> 的
+ * <a href="https://zh.wikipedia.org/w/index.php?title=HTTP%E6%91%98%E8%A6%81%E8%AE%A4%E8%AF%81&action=edit&section=1s">HTTP摘要认证</a>
+ * @author Kevin Wang
+ *
+ */
 @Slf4j
 @Component
 public class HttpDigestInterceptor extends HandlerInterceptorAdapter {
     public static String SERVER_REALM = "serverrealm";
     public static String NONCE_KEY= "servernoncekey";
     public static int NONCE_VALIDITY_SECONDS = 30;
+    private static final String REALM = "testrealm@host.com";
 	@Override
-	public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
-		// 从header中取Basic认证信息
-		// Authorization: Basic YWRtaW46YWRtaW4=
+	public boolean preHandle(HttpServletRequest request, HttpServletResponse httpServletResponse, Object handler) throws Exception {
 		String auth = request.getHeader("Authorization");  
 		log.info("auth:{}",auth);
 		if(Strings.isNullOrEmpty(auth)){
-			response.setStatus(401);
+			httpServletResponse.setStatus(401);
 			String nonce = UUID.randomUUID().toString();
-			response.addHeader("WWW-Authenticate", "Digest Realm=\"test\",qop=\"auth\",nonce=\""+nonce+"\",opaque=\"5ccc069c403ebaf9f0171e9517f40e41\",algorithm=MD5");
+			String opaque = UUID.randomUUID().toString();
+			httpServletResponse.addHeader("WWW-Authenticate", "Digest Realm=\""+REALM+"\",qop=\"auth\",nonce=\""+nonce+"\",opaque=\""+opaque+"\"");
 //			sendWWWAuthenticateDigestMessage(response);
 			return false;
 		}else{
@@ -47,17 +52,44 @@ public class HttpDigestInterceptor extends HandlerInterceptorAdapter {
 	        String username = authMap.get("username");
 	        String realm = authMap.get("realm");
 	        String nonce = authMap.get("nonce");
-	        String uri = authMap.get("uri");
+//	        String uri = authMap.get("uri");
 	        String resp = authMap.get("response");
 	        String qop = authMap.get("qop");
 	        String nc = authMap.get("nc");
 			String cnonce = authMap.get("cnonce");
 			
+			if(!realm.equals(REALM)){
+				return false;
+			}
 			
-			String userPassword = new String(Base64Utils.decodeFromString(authInfo));
-			log.info(userPassword);
-			String[] strs = userPassword.split(":");
-			if(passwordMatch(strs[0], strs[1])){
+			boolean userExist = this.userMap().containsKey(username);
+			if(!userExist){
+				log.info("用户{}不存在",username);
+				return false;
+			}
+			
+			String ha1 = Hashing.md5().hashString(username+":"+REALM+":"+this.userMap().get(username), Charset.defaultCharset()).toString();
+			String ha2 = null;
+			if(Strings.isNullOrEmpty(qop)||"auth".equals(qop)){
+				//HA2 = MD5(A2)=MD5(method:uri)
+				ha2 = Hashing.md5().hashString(request.getMethod()+":"+request.getRequestURI(), Charset.defaultCharset()).toString();
+			}else if("auth-int".equals(qop)){
+				// HA2=MD5(A2)=MD5(method:digestURI:MD5(entiryBody))
+				BufferedReader reader = new BufferedReader(new InputStreamReader(request.getInputStream()));
+				String body = CharStreams.toString(reader);
+				String bodyMd5 = Hashing.md5().hashString(body,Charset.defaultCharset()).toString();
+				ha2 = Hashing.md5().hashString(request.getMethod()+":"+request.getRequestURI()+":"+bodyMd5, Charset.defaultCharset()).toString();
+			}
+			String response = null;
+			if(Strings.isNullOrEmpty(qop)){
+				//response=MD5(HA1:nonce:HA2)
+				response = Hashing.md5().hashString(ha1+":"+nonce+":"+ha2,Charset.defaultCharset()).toString();
+			}else if("auth".equals(qop)||"auth-int".endsWith(qop)){
+				//response=MD5(HA1:nonce:nonceCount:clientNonce:qop:HA2)
+				response = Hashing.md5().hashString(ha1+":"+nonce+":"+nc+":"+cnonce+":"+qop+":"+ha2,Charset.defaultCharset()).toString();
+			}
+			log.info("response:{}",response);
+			if(response.equals(resp)){
 				return true;
 			}
 			return false;
@@ -72,16 +104,23 @@ public class HttpDigestInterceptor extends HandlerInterceptorAdapter {
 			Iterator<String> it = Splitter.on('=').split(input).iterator();
 			String key = it.next();
 			String value = it.next();
+			if(!Strings.isNullOrEmpty(value)){
+				if(value.startsWith("\"")){
+					value = value.substring(1,value.length());
+				}
+				if(value.endsWith("\"")){
+					value = value.substring(0,value.length()-1);
+				}
+			}
 			map.put(key.trim(), value.trim());
 		}
 		return map;
 	}
 	
-	private boolean passwordMatch(String user,String password){
-		if("admin".equals(user) && "123456".equals(password)){
-			return true;
-		}
-		return false;
-	}
 	
+	private Map<String, String> userMap(){
+		Map<String, String> map = Maps.newHashMap();
+		map.put("admin", "123456");
+		return map;
+	}
 }

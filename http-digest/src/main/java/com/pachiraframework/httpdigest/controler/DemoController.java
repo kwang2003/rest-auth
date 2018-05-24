@@ -13,7 +13,7 @@ import org.springframework.web.bind.annotation.RestController;
  */
 @RestController
 public class DemoController {
-	@RequestMapping(path="/demo.json",method=RequestMethod.GET)
+	@RequestMapping(path="/dir/index.html",method={RequestMethod.GET,RequestMethod.POST})
 	public String auth(HttpServletRequest request,HttpServletResponse response){
 		return "demo";
 	}
