@@ -79,7 +79,8 @@ public class HttpBasicInterceptor extends HandlerInterceptorAdapter {
 
 ### 2.HTTP Digest(摘要认证)
 #### 2.1 说明
-Digest认证是HTTP协议自带的另一种认证方式，可以看做是加强版的Basic认证， 使用随机数+密码进行md5，防止截取 header直接解码获得用户密码。Digest认证中用到的一些参数含义及说明|如下：
+Digest认证是HTTP协议自带的另一种认证方式，可以看做是加强版的Basic认证， 使用随机数+密码进行md5，防止截取 header直接解码获得用户密码。Digest认证中用到的一些参数含义及说明如下：
+
 |参数名|含义|备注
 |:-|:-|:-
 |username|用户名|登录帐号
