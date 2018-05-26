@@ -22,5 +22,6 @@
 	<modules>
 		<module>http-basic</module>
 		<module>http-digest</module>
+		<module>appkey-sign</module>
 	</modules>
 </project>

@@ -264,7 +264,138 @@ public class HttpDigestInterceptor extends HandlerInterceptorAdapter {
 
 部分浏览器并不支持auth-int参数，但是都支持auth，浏览器对auth-int的支持参考[浏览器实现](https://zh.wikipedia.org/wiki/HTTP%E6%91%98%E8%A6%81%E8%AE%A4%E8%AF%81#浏览器实现)
 
+### 3.APPKEY+签名认证
+#### 3.1 说明
+APPKEY+签名方式被广泛用于各大商家的开放平台，如[淘宝开放平台](http://open.taobao.com/doc.htm?spm=a219a.7629065.1.21.WlHEjQ#?treeId=477&docId=73&docType=1)，通过为每个调用端分配不同的APPKEY和密钥，根据appkey和密钥对请求参数进行签名，服务器端使用同样的签名算法对调用放传递的签名进行校验，由于每个调用放的密钥是保存在各自服务器上的，只要密钥不泄漏，签名就没法伪造篡改，从而达到安全传输的目的。
+#### 3.2 示例
+```java
+package com.pachiraframework.appkeysign;
+
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.equalTo;
+
+import java.nio.charset.Charset;
+import java.util.Map.Entry;
+import java.util.TreeMap;
+
+import org.junit.Test;
+
+import com.github.kevinsawicki.http.HttpRequest;
+import com.google.common.hash.Hashing;
+
+public class AppkeySignTest {
+	@Test
+	public void testHttpBasic(){
+		String template = "http://localhost:8080/demo.json?name=%s&channel=%s&timestamp=%s&appkey=%s&sign=%s";
+		long timestamp = System.currentTimeMillis();
+		String name = "admin";
+		String channel = "1";
+		String appkey = "appkey1";
+		String secret = "secret1";
+		TreeMap<String, String> params = new TreeMap<String,String>();
+		params.put("name", name);
+		params.put("channel", channel);
+		params.put("appkey", appkey);
+		params.put("timestamp", timestamp+"");
+		StringBuffer buffer = new StringBuffer(secret);
+		for(Entry<String, String> entry : params.entrySet()){
+			buffer.append(entry.getKey());
+			buffer.append(entry.getValue());
+		}
+		buffer.append(secret);
+		String sign = Hashing.md5().hashString(buffer.toString(), Charset.defaultCharset()).toString();
+		String url = String.format(template, name,channel,timestamp,appkey,sign);
+		
+		String body = HttpRequest.get(url).body();
+		assertThat(body, equalTo("demo"));
+	}
+}
+
+```
+#### 3.3 认证流程计算法
+![https://note.youdao.com/yws/public/resource/e5bb1aa758439bbedce6c5dd9a73a81c/xmlnote/ECAAA67D2D1A47DC861BFDEA8FF632A6/77510](https://note.youdao.com/yws/public/resource/e5bb1aa758439bbedce6c5dd9a73a81c/xmlnote/ECAAA67D2D1A47DC861BFDEA8FF632A6/77510)
+![https://note.youdao.com/yws/public/resource/e5bb1aa758439bbedce6c5dd9a73a81c/xmlnote/EB5202902F4146ACB28815E853D11C0A/77511](https://note.youdao.com/yws/public/resource/e5bb1aa758439bbedce6c5dd9a73a81c/xmlnote/EB5202902F4146ACB28815E853D11C0A/77511)
+#### 3.4 服务器端代码实现(基于Spring Boot)
+```java
+package com.pachiraframework.appkeysign.controller;
+
+import java.io.UnsupportedEncodingException;
+import java.nio.charset.Charset;
+import java.util.Map;
+import java.util.TreeSet;
+
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+
+import lombok.extern.slf4j.Slf4j;
+
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
+import org.springframework.web.bind.annotation.RestController;
+
+import com.google.common.collect.Maps;
+import com.google.common.hash.Hashing;
+
+/**
+ * @author kevin wang
+ * 
+ */
+@Slf4j
+@RestController
+public class DemoController {
+	@RequestMapping(path = "/demo.json", method = RequestMethod.GET)
+	public String auth(HttpServletRequest request, HttpServletResponse response) throws UnsupportedEncodingException {
+		TreeSet<String> params = new TreeSet<String>();
+		params.add("timestamp");
+		params.add("name");
+		params.add("appkey");
+		params.add("channel");
+		StringBuffer buffer = new StringBuffer();
+		for(String param : params){
+			buffer.append(param);
+			buffer.append(request.getParameter(param));
+		}
+		log.info("{}",buffer);
+		String encoded = new String(buffer.toString().getBytes("UTF-8"));
+		String appkey = request.getParameter("appkey");
+		String secret = appkeySecret().get(appkey);
+		String input = new StringBuffer(secret).append(encoded).append(secret).toString();
+		String newSign = Hashing.md5().hashString(input, Charset.defaultCharset()).toString();
+		log.info("new sign :{}",newSign);
+		
+		//验证是否已经过期，防止重放
+		Long timestamp = Long.valueOf(request.getParameter("timestamp"));
+		long now = System.currentTimeMillis();
+		if(now-timestamp > 10*60*1000L){//超过10分钟
+			log.warn("该请求已经过期");
+			//return "请求过期";
+		}
+		//签名匹配校验
+		String sign = request.getParameter("sign");
+		if(sign.equals(newSign)){
+			//请求合法
+			return "demo";
+		}
+		return "error";
+	}
+
+	private Map<String, String> appkeySecret() {
+		Map<String, String> map = Maps.newHashMap();
+		map.put("appkey1", "secret1");
+		map.put("appkey2", "secret2");
+		return map;
+	}
+}
+
+```
+#### 3.5 运行代码
+- 前提 有两个appkey和secret分别是appkey1/secret1  appkey2/secrent2
+- 运行[Application.java](appkey-sign/src/main/java/com/pachiraframework/appkeysign/Application.java)类
+- 访问链接[http://localhost:8080/demo.json?name=admin&channel=1&timestamp=1527299323388&appkey=appkey1&sign=b7ccf1a47b2f445cc9e8b33513bbb5c2](http://localhost:8080/demo.json?name=admin&channel=1&timestamp=1527299323388&appkey=appkey1&sign=b7ccf1a47b2f445cc9e8b33513bbb5c2) 
+
 ### 参考资料：
 - [HTTP摘要认证](https://zh.wikipedia.org/w/index.php?title=HTTP%E6%91%98%E8%A6%81%E8%AE%A4%E8%AF%81&action=edit&section=1)
 - [RFC 2167](https://tools.ietf.org/html/rfc2617)
 - [http digest](https://www.jianshu.com/p/18fb07f2f65e)
+- [关于 RESTFUL API 安全认证方式的一些总结](https://www.cnblogs.com/Irving/p/4964489.html)
+- [淘宝开放平台-API调用方法详解](http://open.taobao.com/doc.htm?spm=a219a.7629065.1.21.WlHEjQ#?treeId=477&docId=101617&docType=1)
