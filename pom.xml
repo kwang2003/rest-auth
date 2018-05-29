@@ -23,5 +23,6 @@
 		<module>http-basic</module>
 		<module>http-digest</module>
 		<module>appkey-sign</module>
+		<module>token-jwt</module>
 	</modules>
 </project>

@@ -1,0 +1,60 @@
+body {
+	font-family: "Microsoft Yahei";
+	font-size: 12px;
+	margin: 0;
+	background-size:100%;
+}
+.header {
+  height: 50px;
+  border-bottom: 1px solid #e2e2e2;
+  color: #999;
+  height: 50px;
+  padding-left:50px;
+  line-height: 50px;
+  font-family: "Microsoft Yahei";
+}
+.panel-body {
+    padding: 20px 46px;
+}
+.item{
+	height: 46px;
+	position: relative;
+}
+.item .input-tips {
+  float: left;
+  width: 56px;
+  height: 42px;
+  font-size: 14px;
+  line-height: 42px;
+  font-family: "Hiragino Sans GB", "Microsoft Yahei";
+}
+.item .inputOuter {
+  width: 246px;
+  height: 42px;
+  float: left;
+}
+.space{
+	display: inline-block;
+	width: 14px;
+}
+.panel .panel-heading{
+	font-family: "Microsoft Yahei";
+}
+.f_checktip {
+	float: left;
+	margin-left: 8px;
+	line-height: 20px;
+	height: 20px;
+	overflow: hidden;
+	color: #999;
+	font-size: 12px;
+}
+.f_wrong {
+	color: red;
+	padding-left: 20px;
+	white-space: nowrap;
+	background: url(../img/error.png) no-repeat left center;
+}
+.navbar-default .navbar-brand, .navbar-default .navbar-brand:hover { 
+  color: #fff;
+}
