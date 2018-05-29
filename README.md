@@ -315,6 +315,14 @@ public class AppkeySignTest {
 #### 3.3 认证流程计算法
 ![https://note.youdao.com/yws/public/resource/e5bb1aa758439bbedce6c5dd9a73a81c/xmlnote/ECAAA67D2D1A47DC861BFDEA8FF632A6/77510](https://note.youdao.com/yws/public/resource/e5bb1aa758439bbedce6c5dd9a73a81c/xmlnote/ECAAA67D2D1A47DC861BFDEA8FF632A6/77510)
 ![https://note.youdao.com/yws/public/resource/e5bb1aa758439bbedce6c5dd9a73a81c/xmlnote/EB5202902F4146ACB28815E853D11C0A/77511](https://note.youdao.com/yws/public/resource/e5bb1aa758439bbedce6c5dd9a73a81c/xmlnote/EB5202902F4146ACB28815E853D11C0A/77511)
+几个常见疑问及解答：
+- 为什么要把请求参数做排序处理？
+
+    为了调用方生成sign和服务器端生成sign一致用的，因此请求中的参数如a=1&t=3&c=34顺序可以是任意的，接收方接收到参数的顺序也可能和发送方的顺序不一致，因为要签名中要把参数拼接成如bar2foo1foo_bar3这种格式，同样的参数不同的顺序，也会导致产生不同的签名。
+- 为何要采用timestamp时间戳？
+
+    为了保证接口请求没法被重发。如API请求[http://localhost:8080/demo.json?name=admin&channel=1&timestamp=1527299323388&appkey=appkey1&sign=b7ccf1a47b2f445cc9e8b33513bbb5c2](http://localhost:8080/demo.json?name=admin&channel=1&timestamp=1527299323388&appkey=appkey1&sign=b7ccf1a47b2f445cc9e8b33513bbb5c2)是合法的，但是是过去某个时间的请求，如果不加限制，一旦这个请求地址泄漏出去，有可能被恶意用户再次请求获得数据，服务器端通过获取timestamp参数和本地时间做对比，一旦这个时差超过指定时间如30秒，则认为是非法请求，从而达到保护数据的目的。
+
 #### 3.4 服务器端代码实现(基于Spring Boot)
 ```java
 package com.pachiraframework.appkeysign.controller;
@@ -393,9 +401,183 @@ public class DemoController {
 - 运行[Application.java](appkey-sign/src/main/java/com/pachiraframework/appkeysign/Application.java)类
 - 访问链接[http://localhost:8080/demo.json?name=admin&channel=1&timestamp=1527299323388&appkey=appkey1&sign=b7ccf1a47b2f445cc9e8b33513bbb5c2](http://localhost:8080/demo.json?name=admin&channel=1&timestamp=1527299323388&appkey=appkey1&sign=b7ccf1a47b2f445cc9e8b33513bbb5c2) 
 
+### 4.JWT Token认证
+#### 4.1 说明
+JWT(Json Web Token)是一种基于JSON的，作为一个开放的标准（[RFC 7519](https://link.jianshu.com/?t=https://tools.ietf.org/html/rfc7519)），定义了一种简洁的，自包含的方法用于通信双方之间以Json对象的形式安全的传递信息。因为签名的存在,这些信息是可信任的，JWT可以使用HMAC算法或者是RSA的公私秘钥对进行签名。简洁(Compact): 可以通过URL，POST参数或者在HTTP header发送，因为数据量小，传输速度也很快，自包含(Self-contained)：负载中包含了所有用户所需要的信息。
+![https://note.youdao.com/yws/public/resource/e5bb1aa758439bbedce6c5dd9a73a81c/xmlnote/A3558277560A46119A1270B19AAF25FC/77666](https://note.youdao.com/yws/public/resource/e5bb1aa758439bbedce6c5dd9a73a81c/xmlnote/A3558277560A46119A1270B19AAF25FC/77666)
+#### 4.2 JWT结构
+![https://note.youdao.com/yws/public/resource/e5bb1aa758439bbedce6c5dd9a73a81c/xmlnote/E90E4C328B864F27B5D1B7D5A2C460BB/77668](https://note.youdao.com/yws/public/resource/e5bb1aa758439bbedce6c5dd9a73a81c/xmlnote/E90E4C328B864F27B5D1B7D5A2C460BB/77668)
+JWT包含了三个部分:header.body.signature，这三个部分使用'.'分割
+##### 4.2.1 header
+通常包含两个部分，token类型和加密算法，举例：
+> { "alg": "HS256", "typ": "JWT"} 
+
+然后对这个部分进行base64编码得到JWT的header部分
+##### 4.2.2 body
+包含三种类型的内容，JWT规范中并不强制使用这些内容，但是推荐使用，分别是
+- reserved
+    - iss TOKEN签发者
+    - exp TOKEN到期时间
+    - sub 面向客户
+    - aud 接收方
+    - iat 签发时间
+- public
+
+     公共的声明可以添加任何的信息，一般添加用户的相关信息或其他业务需要的必要信息.但不建议添加敏感信息，因为该部分在客户端可解密.
+- private
+    
+     私有声明是提供者和消费者所共同定义的声明，一般不建议存放敏感信息，因为base64是对称解密的，意味着该部分信息可以归类为明文信息。
+说明：
+个人感觉，除了reserved JWT规范约定的几个名称外，public和private之间的约定并没有严格的界限，只要不重复即可。
+##### 4.2.3 signature
+根据base64编码后的header和body以及一个密钥，私用header中约定的签名算法进行签名，如要使用HMAC SHA256算法，则
+> signature=HMACSHA256(base64URLEncode(header))+"."+base64URLEncode(body),secret)
+
+#### 4.3 JWT使用案例
+#### 4.3.1 案例说明
+这个案例案例使用jwt作为两个系统之间单点登录解决方案，A系统生成token，然后传递到B系统中，B系统接收token，并验证token有效性（jwt框架自带的api），如果token则认为是合法token
+#### 4.3.2 示例核心代码
+- [SSOCallbackController.java](token-jwt/src/main/java/com/pachiraframework/token/jwt/controller/SSOCallbackController.java)
+    
+    使用JWT作为单点登录方案的核心代码，接收传递过来的token字符串，模拟本地调用数据库中查询用户，然后把用户信息写入到session中（模拟通过用户名密码方式登录 ）
+
+    ```java
+    package com.pachiraframework.token.jwt.controller;
+    
+    import io.jsonwebtoken.Claims;
+    import io.jsonwebtoken.ExpiredJwtException;
+    import io.jsonwebtoken.Jwts;
+    import io.jsonwebtoken.SignatureException;
+    
+    import javax.servlet.http.HttpServletRequest;
+    
+    import lombok.extern.slf4j.Slf4j;
+    
+    import org.springframework.beans.factory.annotation.Autowired;
+    import org.springframework.stereotype.Controller;
+    import org.springframework.web.bind.annotation.RequestMapping;
+    
+    import com.pachiraframework.token.jwt.SessionConstant;
+    import com.pachiraframework.token.jwt.model.UserInfo;
+    import com.pachiraframework.token.jwt.service.UserService;
+    
+    /**
+     * 其他系统通过sso进行登陆的额操作
+     * @author kevin wang
+     *
+     */
+    @Slf4j
+    @Controller
+    @RequestMapping(path="/pc")
+    public class SSOCallbackController {
+    	//和SSO服务提供方约定的数据加密方式，不能泄漏
+    	private static final String SECRET_KEY = "123456";
+    	
+    	@Autowired
+    	private UserService userService;
+    	@RequestMapping(path="/sso_callback")
+    	public String callback(HttpServletRequest request) {
+    		//校验access_token的合法性，并从里面解析出有价值的数据（例如mobile字段）
+    		String accessToken = request.getParameter("access_token");
+    		try {
+    			String mobile = this.parseToken(accessToken);
+    			UserInfo userInfo = userService.getByMobile(mobile);
+    			//模拟登录过程
+    			request.getSession().setAttribute(SessionConstant.USER_ID, userInfo.getUserId());
+    			request.getSession().setAttribute(SessionConstant.USER_NAME, userInfo.getName());
+    		}catch (ExpiredJwtException e) {
+    			log.error("token已经过期");
+    		}catch(SignatureException e){
+    			log.error("签名错误");
+    		}
+    		
+    //		String redirectUril = request.getParameter("redirect_uri");
+    		String redirectUril = "http://localhost:8080/index";
+    		return "redirect:"+redirectUril;
+    	}
+    	
+    	private String parseToken(String jwt) {
+    		log.info("JWT:{}",jwt);
+    		//解析JWT字符串中的数据，并进行最基础的验证
+            Claims claims = Jwts.parser()
+                    .setSigningKey(SECRET_KEY)//SECRET_KEY是加密算法对应的密钥，jjwt可以自动判断机密算法
+                    .parseClaimsJws(jwt)//jwt是JWT字符串
+                    .getBody();
+            log.info("JWT CLAIMS:"+claims);
+            //验证issuer和audience是否匹配
+            return (String)claims.get("mobile");
+    	}
+    }
+    
+    ```
+- [LoginController.java](token-jwt/src/main/java/com/pachiraframework/token/jwt/controller/LoginController.java) 
+
+    用户通过在系统内正常通过用户名密码登录的代码逻辑
+- [IndexController.java](token-jwt/src/main/java/com/pachiraframework/token/jwt/controller/IndexController.java)
+
+    需要登录后才能访问的资源
+- [LonginInterceptor.java](token-jwt/src/main/java/com/pachiraframework/token/jwt/interceptor/LoginInterceptor.java)
+    
+    登录拦截器
+
+#### 4.4运行代码
+- 运行[Application.java](token-jwt/src/main/java/com/pachiraframework/token/jwt/Application.java)
+
+A)方式1：通过普通用户名密码方式访问受保护的资源
+- 访问[http://localhost:8080/](http://localhost:8080/)    admin  123456
+
+  ![https://note.youdao.com/yws/public/resource/e5bb1aa758439bbedce6c5dd9a73a81c/xmlnote/E332CFB85AC74DAB8B5BE3A4757F1188/77722](https://note.youdao.com/yws/public/resource/e5bb1aa758439bbedce6c5dd9a73a81c/xmlnote/E332CFB85AC74DAB8B5BE3A4757F1188/77722)
+- 登录成功后到首页
+
+  ![https://note.youdao.com/yws/public/resource/e5bb1aa758439bbedce6c5dd9a73a81c/xmlnote/74953C7874CC453F92C04041A105B1B6/77724](https://note.youdao.com/yws/public/resource/e5bb1aa758439bbedce6c5dd9a73a81c/xmlnote/74953C7874CC453F92C04041A105B1B6/77724)
+
+B)方式B:通过jwt token方式单点登录到系统，然后访问受保护的资源
+- 生成jwt格式的token(通常是另一个系统中)，示例中通过单元测试代码提供了一个token的方法[JwtTest.java](token-jwt/src/test/java/com/pachiraframework/token/jwt/JwtTest.java),这里我们通过该方法生成的token为
+    > eyJhbGciOiJIUzI1NiJ9.eyJleHAiOjMwMDAwMTUyNzU4Mzg2NCwiaXNzIjoia3VhaXhpYW4iLCJhdWQiOiJocCIsInVzZXJfaWQiOiIxMjMiLCJtb2JpbGUiOiIxODUxMjM0NTY3OCIsImxvZ2luX2lkIjoiYWRtaW4ifQ.9dociKzn1w1uaRpRwJWsRVaRDSwDklNKSMZCPajebJE
+    
+    ```java
+    package com.pachiraframework.token.jwt;
+    
+    import io.jsonwebtoken.Jwts;
+    import io.jsonwebtoken.SignatureAlgorithm;
+    
+    import java.util.Date;
+    
+    import lombok.extern.slf4j.Slf4j;
+    
+    import org.junit.Test;
+    
+    @Slf4j
+    public class JwtTest {
+    	private static final String SECRET_KEY = "123456";
+    	@Test
+    	public void testJwt(){
+    		//为了掩饰，生成一个长生命周期的token，生产环境下sso操作时token的周期尽可能小
+    		long minutes = 5000000000000L;
+    		//5分钟token过期
+    		Date exp = new Date(System.currentTimeMillis()+minutes*60*1000);
+    	    String jwt = Jwts.builder()
+    	            .signWith(SignatureAlgorithm.HS256,SECRET_KEY)//SECRET_KEY是加密算法对应的密钥，这里使用额是HS256加密算法
+    	            .setExpiration(exp)
+    	            .setIssuer("kuaixian")
+    	            .setAudience("hp")
+    	            .claim("user_id","123")//该方法是在JWT中加入值为vaule的key字段
+    	            .claim("mobile","18512345678")
+    	            .claim("login_id", "admin")
+    	            .compact();
+    	    log.info(jwt);
+    	}
+    }
+
+    ```
+
+- 访问通用单点登录链接[http://localhost:8080/pc/sso_callback?access_token=eyJhbGciOiJIUzI1NiJ9.eyJleHAiOjMwMDAwMTUyNzU4Mzg2NCwiaXNzIjoia3VhaXhpYW4iLCJhdWQiOiJocCIsInVzZXJfaWQiOiIxMjMiLCJtb2JpbGUiOiIxODUxMjM0NTY3OCIsImxvZ2luX2lkIjoiYWRtaW4ifQ.9dociKzn1w1uaRpRwJWsRVaRDSwDklNKSMZCPajebJE](http://localhost:8080/pc/sso_callback?access_token=eyJhbGciOiJIUzI1NiJ9.eyJleHAiOjMwMDAwMTUyNzU4Mzg2NCwiaXNzIjoia3VhaXhpYW4iLCJhdWQiOiJocCIsInVzZXJfaWQiOiIxMjMiLCJtb2JpbGUiOiIxODUxMjM0NTY3OCIsImxvZ2luX2lkIjoiYWRtaW4ifQ.9dociKzn1w1uaRpRwJWsRVaRDSwDklNKSMZCPajebJE) 自动实现用户识别登录跳转
+
 ### 参考资料：
 - [HTTP摘要认证](https://zh.wikipedia.org/w/index.php?title=HTTP%E6%91%98%E8%A6%81%E8%AE%A4%E8%AF%81&action=edit&section=1)
 - [RFC 2167](https://tools.ietf.org/html/rfc2617)
 - [http digest](https://www.jianshu.com/p/18fb07f2f65e)
 - [关于 RESTFUL API 安全认证方式的一些总结](https://www.cnblogs.com/Irving/p/4964489.html)
 - [淘宝开放平台-API调用方法详解](http://open.taobao.com/doc.htm?spm=a219a.7629065.1.21.WlHEjQ#?treeId=477&docId=101617&docType=1)
+- [初步理解JWT并实践使用](https://blog.csdn.net/qq_40081976/article/details/79046825)
+- [基于jwt的token验证](https://blog.csdn.net/weixin_38568779/article/details/76833848)
